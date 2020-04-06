@@ -1,0 +1,125 @@
+(* The public channel *)
+free ch: channel.
+
+(* The basic type *)
+type entity.
+type nonce.
+type key.
+type integer.
+
+(* Hash operation *)
+fun Hash(bitstring): bitstring.
+
+(* XOR operation *)
+fun XOR(bitstring, bitstring): bitstring.
+equation forall x: bitstring, y: bitstring;
+XOR(XOR(x, y), y) = x.
+
+(* Concat operation *)
+fun Con(bitstring, bitstring): bitstring.
+
+(* Multiplication operation *)
+fun Mult(bitstring, bitstring): bitstring.
+
+(* Mod operation *)
+fun Mod(bitstring, bitstring): bitstring.
+
+(* Plus operation *)
+fun Plus(bitstring, integer): bitstring.
+
+(* X, Y coordinate *)
+fun Xcoor(bitstring): bitstring.
+fun Ycoor(bitstring): bitstring.
+
+(* Shared key encryption *)
+fun encrypt(bitstring,key): bitstring.
+reduc forall x: bitstring, y: key;
+decrypt(encrypt(x,y),y) = x.
+
+(* Type convertion *)
+fun keytobit(key): bitstring   [data,typeConverter].
+fun nontobit(nonce): bitstring [data,typeConverter].
+fun bittokey(bitstring): key   [data,typeConverter].
+fun inttobit(integer): bitstring [data,typeConverter].
+
+(* The basic variables *)
+free Server, User: entity.	(*two entities of the scheme*)
+free P: bitstring.		(*a generator*)
+free k: bitstring[private].	(*private key*)
+free G: bitstring.		(*public key*)
+
+(* Authentication queries *)
+event SUbegin(entity).
+event SUend(entity).
+event USbegin(entity).
+event USend(entity).
+
+query e: entity; inj-event(SUend(e)) ==> inj-event(SUbegin(e)).
+query e: entity; inj-event(USend(e)) ==> inj-event(USbegin(e)).
+
+(* Queries *)
+free svalueA, svalueB: bitstring [private].
+query attacker(svalueA);
+      attacker(svalueB).
+
+(* Role of the User *)
+let processUser(ID: bitstring, PW: bitstring, ru: bitstring, au: nonce, Au: bitstring, b: nonce, n0: integer) =
+	let (VPW: bitstring)= Hash(Con(Con(PW, nontobit(au)), ID)) in
+	let (xAu: bitstring)= Hash(Mod(XOR(Hash(ID), VPW), inttobit(n0))) in
+	if xAu = Au then
+		event SUbegin(Server);
+		new cu: nonce;
+		let (N: bitstring)= XOR(ru, VPW) in
+		let (V: bitstring)= Mult(nontobit(cu), P) in
+		let (W: bitstring)= Mult(nontobit(cu), G) in
+		let (fu: bitstring)= XOR(ID, Xcoor(W)) in
+		let (zu: bitstring)= Hash(Con(ID,Con(Ycoor(W), Con(fu, N)))) in
+out (ch, (V, fu, zu, true));
+in (ch, (csG: bitstring, Auths: bitstring, t: nonce));
+	let (xVs: bitstring)= Mult(nontobit(cu), csG) in
+	let (xsk: bitstring)= Hash(Con(N, Con(Xcoor(W), Con(G, Con(xVs, Con(ID, nontobit(t))))))) in
+	let (xAuths: bitstring)= Hash(Con(nontobit(t), Con(xsk, N))) in
+	if xAuths = Auths then
+		new int: integer;
+		let (Authu: bitstring)= Hash(Con(Plus(nontobit(t), int), Con(xsk, Con(N, Con(xVs, ID))))) in
+out (ch, (Authu, int, true));
+event USend(User);
+out (ch, encrypt(svalueA, bittokey(xsk))).
+
+(* Role of the Server *)
+let processServer(ID: bitstring, b: nonce)=
+in (ch, (V: bitstring, fu: bitstring, zu:bitstring));
+	let (xW: bitstring)= Mult(k, V) in
+	let (xID: bitstring)= XOR(fu, Xcoor(xW)) in
+	event USbegin(User);
+	if xID = ID then
+		let (N: bitstring)= Hash(Con(k, Con(ID, nontobit(b)))) in
+		let (xzu: bitstring)= Hash(Con(xID, Con(Ycoor(xW), Con(fu, N)))) in
+	if xzu = zu then
+		new cs: nonce;
+		new t: nonce;
+		let (csG: bitstring)= Mult(nontobit(cs), G) in
+		let (Vs: bitstring)= Mult(nontobit(cs), V) in
+		let (sk: bitstring)= Hash(Con(N, Con(Xcoor(xW), Con(G, Con(Vs, Con(ID, nontobit(t))))))) in
+		let (Auths: bitstring)= Hash(Con(nontobit(t), Con(sk, N))) in
+out (ch, (csG, Auths, t, true));
+in (ch, (Authu: bitstring, int: integer));
+	let (xAuthu: bitstring)= Hash(Con(Plus(nontobit(t), int), Con(sk, Con(N, Con(Vs, ID))))) in
+	if xAuthu = Authu then
+event SUend(Server); (* ok *)
+out (ch, encrypt(svalueB, bittokey(sk))).
+
+(* Start Process *)
+process
+	new ID: bitstring;
+	new PW: bitstring;
+	new ru: bitstring;
+	new au: nonce;
+	new Au: bitstring;
+	new b: nonce;
+	new n0: integer;
+
+	(
+	(!processUser(ID, PW, ru, au, Au, b, n0)) |
+	(!processServer(ID, b))
+	)
