@@ -1,0 +1,144 @@
+(*--The two public channel--*)
+free ch1: channel.
+free ch2: channel.
+
+(*--The basic type--*)
+type entity.
+type nonce.
+type key.
+
+(*--Hash operation--*) 
+fun H0(bitstring): bitstring.
+fun H1(bitstring): bitstring.
+fun H2(bitstring): bitstring.
+fun H3(bitstring): bitstring.
+
+(*--XOR operation--*)
+fun XOR(bitstring, bitstring): bitstring.
+equation forall x: bitstring, y: bitstring;
+XOR(XOR(x, y), y) = x.
+
+(*--Concat operation--*)
+fun Con(bitstring, bitstring): bitstring.
+
+(*--Modular exponentiation operation--*)
+fun Exp(bitstring, bitstring): bitstring.
+
+(*--Shared key encryption--*)
+fun Enc(bitstring,key): bitstring.
+reduc forall x: bitstring, y: key;
+Dec(Enc(x,y),y) = x.
+
+(*--Type convertion--*)
+fun nontobit(nonce): bitstring [data,typeConverter].
+fun bittokey(bitstring): key     [data,typeConverter].
+
+(*--Secrecy assumptions
+not attacker(new k).--*)
+
+(*--The basic variables--*)
+free Vi, Ri, TA: entity.       (*---three entities in the proposed scheme--*)
+free g: bitstring.              (*---a generator of a multiplicative group--*)
+free PVIDvi: bitstring.        (*---the user's pseudonym identity--*)
+free x: bitstring[private].    (*---private key--*)
+free y: bitstring.              (*---public key--*)
+
+(*--Authentication queries--*)
+event VTbegin(entity).
+event VTend(entity).
+event TVbegin(entity).
+event TVend(entity).
+
+query t: entity; inj-event(VTend(t)) ==> inj-event(VTbegin(t)).
+query t: entity; inj-event(TVend(t)) ==> inj-event(TVbegin(t)).
+
+(*--Queries--*)
+free svalueA, svalueB: bitstring [private].
+query attacker(svalueA);
+        attacker(svalueB).
+
+(*--Role of the Vi with identity IDvi and password PWi--*)
+let processVi(IDvi: bitstring, PWi: bitstring, Ai: bitstring, Ni: bitstring) =
+        let (xPVIDvi: bitstring) = H0(IDvi) in
+        let (HPWi: bitstring)= H0(PWi) in		
+        let (xAi: bitstring) = H0(Con(HPWi,xPVIDvi)) in
+        if xAi = Ai then
+      
+                event TVbegin(TA);
+                let (k: bitstring) = XOR(Ni, HPWi) in
+                new u: nonce;
+                new Tvi: nonce;
+                let (C1: bitstring) = Exp(g, nontobit(u)) in
+                let (Y1: bitstring) = Exp(y, nontobit(u)) in
+                let (DIDVi: bitstring) = XOR(PVIDvi, H0(Con(C1,Y1))) in
+                let (CVi: bitstring) = H0(Con(Con(Y1,DIDVi),k)) in
+
+(*VR1*) out(ch1, (C1, DIDVi, CVi, Tvi, true));  
+(*RV1*) in(ch1, (Eks: bitstring, C3: bitstring, Mi: bitstring, T2: nonce));
+        new T3: nonce;
+        let (xKs: bitstring) = Y1 in
+        let (C2xork: bitstring) = Dec(Eks, bittokey(xKs)) in
+        let (C2: bitstring) = XOR(C2xork,k) in
+        let (xC3: bitstring) = H1(Con(Con(xKs,k),C2)) in
+        if xC3 = C3 then
+		  
+                let (xKmast: bitstring) = Exp(C2, nontobit(u)) in
+                let (UserParam: bitstring) = Dec(Mi, bittokey(xKmast)) in
+                event VTend(Vi);
+                out(ch1, Enc(svalueA, bittokey(xKmast))).
+
+(*--Role of the Ri with identity IDri--*)
+let processRi(IDri: bitstring) = 
+        in(ch1, (C1: bitstring, DIDVi: bitstring, CVi: bitstring, Tvi: nonce));    
+        new Tri: nonce;
+        let (CVRi: bitstring) = H0(Con(Con(CVi, IDri),nontobit(Tri))) in
+(*RT1*) out(ch2, (IDri, C1, DIDVi, CVRi, Tri, true));  
+(*TR1*) in(ch2, (Eks: bitstring, C3: bitstring, Mi: bitstring, T1: nonce));
+        new T2: nonce;
+(*RV1*) out(ch1, (Eks, C3, Mi, T2, true)).
+	  
+(*--Role of the TA--*)
+let processTA(Certvi: bitstring, Seedvi: bitstring, PKvi: bitstring, SKvi: bitstring) =     
+        in(ch2, (IDri: bitstring, C1: bitstring, DIDVi: bitstring, CVRi: bitstring, Tri: nonce));     
+        new T1: nonce;
+        let (xY1: bitstring) = Exp(C1,x) in
+        let (xPVIDi: bitstring) = XOR(DIDVi,H0(Con(C1,xY1))) in
+        let (xk: bitstring) = H0(Con(x,xPVIDi)) in
+        let (xCVRi: bitstring) = H0(Con(Con(H0(Con(Con(xY1,DIDVi),xk)),IDri),nontobit(Tri))) in
+        if xCVRi = CVRi then
+
+                event VTbegin(Vi);
+                new v: nonce;
+                let (Kmast: bitstring) = Exp(C1,nontobit(v)) in
+                let (Ks: bitstring) = Exp(C1,x) in
+                let (C2: bitstring) = Exp(g,nontobit(v)) in
+                let (C3: bitstring) = H1(Con(Con(Ks,xk),C2)) in
+                let (Mi: bitstring) = Enc(Con(Con(Con(Certvi,Seedvi),PKvi),SKvi), bittokey(Kmast)) in
+                let (Eks: bitstring) = Enc(XOR(C2,xk), bittokey(Ks)) in
+(*TR1*) out(ch2, (Eks, C3, Mi, T1, true));  
+                event TVend(TA);
+                (* OK *)     
+                out(ch2, Enc(svalueB, bittokey(Kmast))).		
+
+(*--Start process--*)
+process
+(
+	new IDvi: bitstring; 
+	new IDri: bitstring; 
+	new PWi: bitstring;
+	new Certvi: bitstring;
+	new Seedvi: bitstring;
+	new PKvi: bitstring;
+	new SKvi: bitstring;
+
+	let (Ni: bitstring) = XOR(H0(PWi), H0(Con(x,H0(IDvi)))) in
+	let (Ai: bitstring) = H0(Con(H0(PWi),H0(IDvi))) in
+
+          (*-- Launch an unbounded number of sessions of the user --*)
+          (!processVi(IDvi, PWi, Ai, Ni)) | 
+          (*-- Launch an unbounded number of sessions of the Ri--*)
+          (!processRi(IDri)) |
+          (*-- Launch an unbounded number of sessions of the TA--*)
+          (!processTA(Certvi, Seedvi, PKvi, SKvi)) 
+  )
+
